@@ -1,7 +1,11 @@
 # DECISIONS.md
 
-1. **Indexes.** Unique `(emp_code, date desc)` on logs: stops duplicate punch-ins and serves per-employee lists, the monthly summary and the trend. `(date desc, emp_code)` serves date ranges, the default sort, the summary and the leaderboard. `(status, date, emp_code)` serves the status filter. `(emp_code, punch_in)` finds the record to punch out. Employees: unique `emp_code`, `(department, joined_on)`. I rejected a separate `late_minutes` index: the monthly range already narrows the data.
-2. **Punch-in race.** Both requests try `insert_one`. The unique index lets one succeed (201); the other gets `DuplicateKeyError` and I return 409. No read happens first.
-3. **Ties.** I rank with `$rank` (1, 2, 2, 4) and only then keep `rank <= limit`, so a tie at the cutoff returns every tied person, sometimes more than `limit` rows.
-4. **Headcount.** The summary starts from `employees` (joined on or before month end) and looks up each person's logs, so someone with zero logs still counts once.
-5. **100x data.** Pre-aggregate daily and monthly totals per employee (written at punch time) instead of scanning raw logs for every analytics call.
+1. **Indexes.** On attendance logs I made four. The first is unique on employee and date. It stops double punch-ins and speeds up per-employee lookups, the monthly summary and the trend. The second is on date then employee, for date ranges, the default sort, the department summary and the leaderboard. The third starts with status, for the status filter. The fourth is employee then punch-in time, so punch-out can find the open record quickly. On employees I added a unique emp_code index and one on department plus joined date. I did not add an index on late minutes, because the month range already narrows the data and an extra index would slow down writes.
+
+2. **Punch-in race.** Both requests try to insert. The unique index lets only one of them in. The other gets a duplicate-key error and I return 409. I never check first and insert later.
+
+3. **Ties.** I rank everyone first, and only then apply the limit. If two people tie at the cutoff, both are returned, so the list can be longer than the limit. The next rank after a tie is skipped.
+
+4. **Headcount.** The department summary starts from the employees collection, not the logs, and then looks up each person's logs. Someone with no logs still counts once.
+
+5. **100x data.** I would store daily totals per employee when people punch in or out, so analytics read small summary records instead of scanning every raw log.
